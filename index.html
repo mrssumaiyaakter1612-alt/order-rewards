@@ -18,10 +18,11 @@
   input { width:100%; padding:13px; font-size:16px; border:1px solid var(--line); border-radius:10px; background:var(--bg); color:var(--text); }
   button { width:100%; margin-top:14px; padding:13px; font-size:16px; font-weight:600; border:0; border-radius:10px; background:var(--accent); color:#fff; cursor:pointer; }
   button:disabled { opacity:.6; cursor:wait; }
-  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--line); }
   .msg { margin-top:12px; font-size:15px; min-height:20px; }
   .msg.ok { color:var(--ok); } .msg.bad { color:var(--bad); }
-  .boxes { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .who { display:flex; justify-content:space-between; align-items:center; gap:8px; color:var(--muted); font-size:14px; margin-bottom:12px; }
+  .who a { color:var(--accent); cursor:pointer; text-decoration:underline; white-space:nowrap; }
+  .boxes { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px; }
   .box { border:2px dashed var(--line); border-radius:14px; padding:16px 8px; text-align:center; background:var(--card); }
   .box:last-child { grid-column:1 / -1; }
   .pct { font-size:34px; font-weight:800; color:var(--muted); }
@@ -36,22 +37,25 @@
 <body>
 <div class="wrap">
 
-  <div id="v1">
+  <div id="login">
     <h1>Order Rewards</h1>
-    <p class="sub">Enter your order number to unlock your discount.</p>
+    <p class="sub">Log in with your email to track your orders and unlock discounts.</p>
     <div class="card">
-      <input id="order" type="text" placeholder="Enter your order number" autocomplete="off">
-      <button id="btn">Submit</button>
-      <div class="msg" id="msg1"></div>
+      <input id="email" type="email" placeholder="Your email" autocomplete="email">
+      <button id="loginBtn">Continue</button>
+      <div class="msg" id="msgL"></div>
     </div>
   </div>
 
-  <div id="v2" hidden>
+  <div id="dash" hidden>
     <h1>Your Rewards</h1>
-    <p class="sub">Each order unlocks one box.</p>
-    <div class="msg" id="msg2" style="margin:0 0 14px"></div>
+    <div class="who"><span id="who"></span><a id="logout">Log out</a></div>
     <div class="boxes" id="boxes"></div>
-    <button class="ghost" id="back">Enter another order number</button>
+    <div class="card">
+      <input id="order" type="text" placeholder="Enter your order number" autocomplete="off">
+      <button id="btn">Submit</button>
+      <div class="msg" id="msg"></div>
+    </div>
   </div>
 
 </div>
@@ -62,6 +66,7 @@
 
   const TIERS = [10, 20, 30, 40, 50];
   const $ = id => document.getElementById(id);
+  let email = '';
 
   function renderBoxes(codes) {
     const b = $('boxes'); b.textContent = '';
@@ -71,50 +76,83 @@
       d.className = 'box' + (open ? ' open' : '');
       const p = document.createElement('div'); p.className = 'pct'; p.textContent = t + '%';
       const s = document.createElement('div'); s.className = 'state';
+      d.appendChild(p); d.appendChild(s);
       if (open) {
         s.textContent = 'Promo code';
         const c = document.createElement('div'); c.className = 'code'; c.textContent = codes[i];
-        d.appendChild(p); d.appendChild(s); d.appendChild(c);
+        d.appendChild(c);
       } else {
         s.textContent = '🔒 Locked';
-        d.appendChild(p); d.appendChild(s);
       }
       b.appendChild(d);
     });
   }
 
-  function show(v2) { $('v1').hidden = v2; $('v2').hidden = !v2; }
+  function setMsg(id, text, cls) { const m = $(id); m.textContent = text; m.className = 'msg ' + (cls || ''); }
+
+  async function api(params) {
+    if (API_URL.indexOf('PASTE_') === 0) throw new Error('no_api');
+    const r = await fetch(API_URL + '?' + new URLSearchParams(Object.assign({ email: email }, params)).toString());
+    return r.json();
+  }
+
+  function showDash(d) {
+    $('login').hidden = true; $('dash').hidden = false;
+    $('who').textContent = email;
+    renderBoxes(d.codes || []);
+  }
+
+  async function login(e) {
+    e = (e || '').trim().toLowerCase();
+    if (!/^\S+@\S+\.\S+$/.test(e)) { setMsg('msgL', 'Please enter a valid email.', 'bad'); return; }
+    email = e;
+    $('loginBtn').disabled = true; setMsg('msgL', 'Loading…');
+    try {
+      const d = await api({ action: 'status' });
+      if (!d.ok) { setMsg('msgL', 'Please enter a valid email.', 'bad'); return; }
+      try { localStorage.setItem('rw_email', email); } catch (x) {}
+      setMsg('msgL', ''); setMsg('msg', '');
+      showDash(d);
+    } catch (x) {
+      setMsg('msgL', API_URL.indexOf('PASTE_') === 0 ? 'Site is not connected yet (API_URL missing).' : 'Something went wrong. Please try again.', 'bad');
+    } finally { $('loginBtn').disabled = false; }
+  }
+
+  const MSG = {
+    ok: ['Order verified! A new box is unlocked.', 'ok'],
+    already: ['This order is already on your account.', ''],
+    used_other: ['This order number was already used on another account.', 'bad'],
+    invalid: ['Order number not found. Please check it and try again.', 'bad'],
+    full: ['All 5 boxes are already unlocked.', '']
+  };
 
   async function submit() {
     const o = $('order').value.trim();
-    const m1 = $('msg1');
-    if (!o) { m1.textContent = 'Please enter your order number.'; m1.className = 'msg bad'; return; }
-    if (API_URL.indexOf('PASTE_') === 0) { m1.textContent = 'Site is not connected yet (API_URL missing).'; m1.className = 'msg bad'; return; }
-    $('btn').disabled = true; m1.textContent = 'Checking…'; m1.className = 'msg';
+    if (!o) { setMsg('msg', 'Please enter your order number.', 'bad'); return; }
+    $('btn').disabled = true; setMsg('msg', 'Checking…');
     try {
-      const r = await fetch(API_URL + '?' + new URLSearchParams({ order: o }).toString());
-      const d = await r.json();
-      if (d.result === 'invalid') {
-        m1.textContent = 'Order number not found. Please check it and try again.'; m1.className = 'msg bad';
-        return;
-      }
+      const d = await api({ action: 'claim', order: o });
+      if (!d.ok) { setMsg('msg', 'Something went wrong. Please log in again.', 'bad'); return; }
       renderBoxes(d.codes || []);
-      const m2 = $('msg2');
-      if (d.result === 'ok') { m2.textContent = 'Order verified! A new box is unlocked.'; m2.className = 'msg ok'; }
-      else if (d.result === 'already') { m2.textContent = 'This order was already counted.'; m2.className = 'msg'; }
-      else { m2.textContent = 'All 5 boxes are already unlocked.'; m2.className = 'msg'; }
-      m1.textContent = ''; $('order').value = '';
-      show(true);
-    } catch (e) {
-      m1.textContent = 'Something went wrong. Please try again.'; m1.className = 'msg bad';
-    } finally {
-      $('btn').disabled = false;
-    }
+      const m = MSG[d.result] || ['', ''];
+      setMsg('msg', m[0], m[1]);
+      if (d.result === 'ok') $('order').value = '';
+    } catch (x) {
+      setMsg('msg', 'Something went wrong. Please try again.', 'bad');
+    } finally { $('btn').disabled = false; }
   }
 
+  $('loginBtn').addEventListener('click', () => login($('email').value));
+  $('email').addEventListener('keydown', e => { if (e.key === 'Enter') login($('email').value); });
   $('btn').addEventListener('click', submit);
   $('order').addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
-  $('back').addEventListener('click', () => show(false));
+  $('logout').addEventListener('click', () => {
+    try { localStorage.removeItem('rw_email'); } catch (x) {}
+    email = ''; $('dash').hidden = true; $('login').hidden = false; $('email').value = ''; setMsg('msg', '');
+  });
+
+  renderBoxes([]);
+  try { const saved = localStorage.getItem('rw_email'); if (saved) { $('email').value = saved; login(saved); } } catch (x) {}
 </script>
 </body>
 </html>
