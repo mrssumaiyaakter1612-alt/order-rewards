@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Order Rewards</title>
+<style>
+  :root { --bg:#f7f7fb; --card:#fff; --text:#1c1c28; --muted:#6b6b80; --accent:#4f46e5; --ok:#16a34a; --bad:#dc2626; --line:#e3e3ee; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14141c; --card:#1e1e2a; --text:#f0f0f7; --muted:#a0a0b5; --accent:#818cf8; --line:#33334a; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); }
+  .wrap { max-width:520px; margin:0 auto; padding:32px 16px 48px; }
+  h1 { font-size:26px; margin:8px 0; }
+  p.sub { color:var(--muted); margin:0 0 20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; margin-bottom:16px; }
+  input { width:100%; padding:13px; font-size:16px; border:1px solid var(--line); border-radius:10px; background:var(--bg); color:var(--text); }
+  button { width:100%; margin-top:14px; padding:13px; font-size:16px; font-weight:600; border:0; border-radius:10px; background:var(--accent); color:#fff; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:wait; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--line); }
+  .msg { margin-top:12px; font-size:15px; min-height:20px; }
+  .msg.ok { color:var(--ok); } .msg.bad { color:var(--bad); }
+  .boxes { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .box { border:2px dashed var(--line); border-radius:14px; padding:16px 8px; text-align:center; background:var(--card); }
+  .box:last-child { grid-column:1 / -1; }
+  .pct { font-size:34px; font-weight:800; color:var(--muted); }
+  .state { margin-top:6px; font-size:14px; color:var(--muted); }
+  .box.open { border:2px solid var(--ok); }
+  .box.open .pct { color:var(--accent); }
+  .box.open .state { color:var(--text); }
+  .code { display:inline-block; margin-top:4px; padding:4px 12px; border-radius:8px; background:var(--bg); border:1px dashed var(--ok); font-weight:800; letter-spacing:1px; font-size:18px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="v1">
+    <h1>Order Rewards</h1>
+    <p class="sub">Enter your order number to unlock your discount.</p>
+    <div class="card">
+      <input id="order" type="text" placeholder="Enter your order number" autocomplete="off">
+      <button id="btn">Submit</button>
+      <div class="msg" id="msg1"></div>
+    </div>
+  </div>
+
+  <div id="v2" hidden>
+    <h1>Your Rewards</h1>
+    <p class="sub">Each order unlocks one box.</p>
+    <div class="msg" id="msg2" style="margin:0 0 14px"></div>
+    <div class="boxes" id="boxes"></div>
+    <button class="ghost" id="back">Enter another order number</button>
+  </div>
+
+</div>
+
+<script>
+  // Paste your Google Apps Script Web App URL here:
+  const API_URL = 'PASTE_YOUR_WEB_APP_URL_HERE';
+
+  const TIERS = [5, 10, 15, 25, 50];
+  const $ = id => document.getElementById(id);
+
+  function renderBoxes(codes) {
+    const b = $('boxes'); b.textContent = '';
+    TIERS.forEach((t, i) => {
+      const d = document.createElement('div');
+      const open = i < codes.length;
+      d.className = 'box' + (open ? ' open' : '');
+      const p = document.createElement('div'); p.className = 'pct'; p.textContent = t + '%';
+      const s = document.createElement('div'); s.className = 'state';
+      if (open) {
+        s.textContent = 'Promo code';
+        const c = document.createElement('div'); c.className = 'code'; c.textContent = codes[i];
+        d.appendChild(p); d.appendChild(s); d.appendChild(c);
+      } else {
+        s.textContent = '🔒 Locked';
+        d.appendChild(p); d.appendChild(s);
+      }
+      b.appendChild(d);
+    });
+  }
+
+  function show(v2) { $('v1').hidden = v2; $('v2').hidden = !v2; }
+
+  async function submit() {
+    const o = $('order').value.trim();
+    const m1 = $('msg1');
+    if (!o) { m1.textContent = 'Please enter your order number.'; m1.className = 'msg bad'; return; }
+    if (API_URL.indexOf('PASTE_') === 0) { m1.textContent = 'Site is not connected yet (API_URL missing).'; m1.className = 'msg bad'; return; }
+    $('btn').disabled = true; m1.textContent = 'Checking…'; m1.className = 'msg';
+    try {
+      const r = await fetch(API_URL + '?' + new URLSearchParams({ order: o }).toString());
+      const d = await r.json();
+      if (d.result === 'invalid') {
+        m1.textContent = 'Order number not found. Please check it and try again.'; m1.className = 'msg bad';
+        return;
+      }
+      renderBoxes(d.codes || []);
+      const m2 = $('msg2');
+      if (d.result === 'ok') { m2.textContent = 'Order verified! A new box is unlocked.'; m2.className = 'msg ok'; }
+      else if (d.result === 'already') { m2.textContent = 'This order was already counted.'; m2.className = 'msg'; }
+      else { m2.textContent = 'All 5 boxes are already unlocked.'; m2.className = 'msg'; }
+      m1.textContent = ''; $('order').value = '';
+      show(true);
+    } catch (e) {
+      m1.textContent = 'Something went wrong. Please try again.'; m1.className = 'msg bad';
+    } finally {
+      $('btn').disabled = false;
+    }
+  }
+
+  $('btn').addEventListener('click', submit);
+  $('order').addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+  $('back').addEventListener('click', () => show(false));
+</script>
+</body>
+</html>
